@@ -32,6 +32,8 @@ class GamePanel extends JPanel {
     private final javax.swing.Timer gameTimer;
     private int playerHealth = 10;
     private int waveCounter = 0;
+    private int enemiesToSpawn = 0;
+    private javax.swing.Timer waveSpawner;
 
     public GamePanel() {
         map = new MapGrid(15, 20);
@@ -44,25 +46,42 @@ class GamePanel extends JPanel {
         gameTimer = new javax.swing.Timer(100, e -> updateGame());
         gameTimer.start();
 
-        new javax.swing.Timer(5000, e -> spawnWave()).start();
+        startNextWave();
 
         addMouseListener(new MouseAdapter() {
             public void mouseClicked(MouseEvent e) {
                 int x = e.getX() / MapGrid.CELL_SIZE;
                 int y = e.getY() / MapGrid.CELL_SIZE;
-                if (map.isPlacable(x, y)) {
+                if (map.isPlacable(x, y) && !isTowerAtPosition(x, y)) {
                     towers.add(new Tower(x, y));
                 }
             }
         });
     }
 
-    private void spawnWave() {
-        waveCounter++;
-        for (int i = 0; i < waveCounter; i++) {
-            Point startPoint = map.getPathPoints().get(0);
-            enemies.add(new Enemy(startPoint.x, startPoint.y, map));
+    private void startNextWave() {
+        if (waveSpawner != null && waveSpawner.isRunning()) {
+            waveSpawner.stop();
         }
+
+        waveCounter++;
+        enemiesToSpawn = 10;
+
+        waveSpawner = new javax.swing.Timer(1000, e -> {
+            if (enemiesToSpawn > 0) {
+                spawnEnemy();
+                enemiesToSpawn--;
+            } else {
+                waveSpawner.stop();
+            }
+        });
+
+        waveSpawner.start();
+    }
+
+    private void spawnEnemy() {
+        Point startPoint = map.getPathPoints().get(0);
+        enemies.add(new Enemy(startPoint.x, startPoint.y, map));
     }
 
     private void updateGame() {
@@ -82,11 +101,24 @@ class GamePanel extends JPanel {
             }
         }
 
+        if (enemies.isEmpty() && enemiesToSpawn == 0 && (waveSpawner == null || !waveSpawner.isRunning())) {
+            startNextWave();
+        }
+
         for (Tower tower : towers) {
             tower.attack(enemies);
         }
 
         repaint();
+    }
+
+    private boolean isTowerAtPosition(int x, int y) {
+        for (Tower tower : towers) {
+            if (tower.getX() == x && tower.getY() == y) {
+                return true;
+            }
+        }
+        return false;
     }
 
     protected void paintComponent(Graphics g) {
@@ -218,6 +250,14 @@ class Tower {
     public Tower(int x, int y) {
         this.x = x;
         this.y = y;
+    }
+
+    public int getX() {
+        return x;
+    }
+
+    public int getY() {
+        return y;
     }
 
     public void attack(List<Enemy> enemies) {
