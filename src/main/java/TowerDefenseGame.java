@@ -31,6 +31,7 @@ class GamePanel extends JPanel {
     private final List<Tower> towers;
     private final javax.swing.Timer gameTimer;
     private int playerHealth = 10;
+    private static int playerGold = 50;
     private int waveCounter = 0;
     private int enemiesToSpawn = 0;
     private javax.swing.Timer waveSpawner;
@@ -43,8 +44,10 @@ class GamePanel extends JPanel {
         setPreferredSize(new Dimension(800, 600));
         setBackground(Color.GRAY);
 
-        gameTimer = new javax.swing.Timer(100, e -> updateGame());
+        gameTimer = new javax.swing.Timer(16, e -> updateGame());
         gameTimer.start();
+
+        new javax.swing.Timer(1000, e -> playerGold += 5).start();
 
         startNextWave();
 
@@ -52,8 +55,9 @@ class GamePanel extends JPanel {
             public void mouseClicked(MouseEvent e) {
                 int x = e.getX() / MapGrid.CELL_SIZE;
                 int y = e.getY() / MapGrid.CELL_SIZE;
-                if (map.isPlacable(x, y) && !isTowerAtPosition(x, y)) {
+                if (playerGold >= 25 && map.isPlacable(x, y) && !isTowerAtPosition(x, y)) {
                     towers.add(new Tower(x, y));
+                    playerGold -= 25;
                 }
             }
         });
@@ -66,22 +70,44 @@ class GamePanel extends JPanel {
 
         waveCounter++;
         enemiesToSpawn = 10;
+        List<Enemy> waveEnemies = generateWaveEnemies();
 
-        waveSpawner = new javax.swing.Timer(1000, e -> {
-            if (enemiesToSpawn > 0) {
-                spawnEnemy();
-                enemiesToSpawn--;
-            } else {
-                waveSpawner.stop();
+        waveSpawner = new javax.swing.Timer(1000, new ActionListener() {
+            private final Iterator<Enemy> enemyIterator = waveEnemies.iterator();
+
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                if (enemyIterator.hasNext()) {
+                    enemies.add(enemyIterator.next());
+                } else {
+                    waveSpawner.stop();
+                    enemiesToSpawn = 0;
+                }
             }
         });
 
         waveSpawner.start();
     }
 
-    private void spawnEnemy() {
+    private List<Enemy> generateWaveEnemies() {
+        List<Enemy> waveEnemies = new ArrayList<>();
+        int runts = new Random().nextInt(4) + 1;
+        int knights = new Random().nextInt(4) + 1;
+        int brutes = 10 - runts - knights;
+
         Point startPoint = map.getPathPoints().get(0);
-        enemies.add(new Enemy(startPoint.x, startPoint.y, map));
+
+        for (int i = 0; i < runts; i++) {
+            waveEnemies.add(new Runt(startPoint.x, startPoint.y, map));
+        }
+        for (int i = 0; i < knights; i++) {
+            waveEnemies.add(new Knight(startPoint.x, startPoint.y, map));
+        }
+        for (int i = 0; i < brutes; i++) {
+            waveEnemies.add(new Brute(startPoint.x, startPoint.y, map));
+        }
+
+        return waveEnemies;
     }
 
     private void updateGame() {
@@ -101,12 +127,12 @@ class GamePanel extends JPanel {
             }
         }
 
-        if (enemies.isEmpty() && enemiesToSpawn == 0 && (waveSpawner == null || !waveSpawner.isRunning())) {
-            startNextWave();
-        }
-
         for (Tower tower : towers) {
             tower.attack(enemies);
+        }
+
+        if (enemies.isEmpty() && enemiesToSpawn == 0 && (waveSpawner == null || !waveSpawner.isRunning())) {
+            startNextWave();
         }
 
         repaint();
@@ -121,6 +147,10 @@ class GamePanel extends JPanel {
         return false;
     }
 
+    public static void incrementGold(int amount) {
+        playerGold += amount;
+    }
+
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
         map.draw(g);
@@ -130,6 +160,7 @@ class GamePanel extends JPanel {
         g.setColor(Color.BLACK);
         g.drawString("Health: " + playerHealth, 10, 10);
         g.drawString("Wave: " + waveCounter, 10, 25);
+        g.drawString("Gold: " + playerGold, 10, 40);
     }
 }
 
@@ -151,18 +182,28 @@ class MapGrid {
         boolean movingRight = true;
         int y = 0;
 
-        for (int x = 0; x < cols; x++) {
-            if (x % 2 == 0) {
-                for (int i = 0; i < cols; i++) {
-                    int column = movingRight ? i : cols - 1 - i;
-                    grid[y][column] = 1;
-                    pathPoints.add(new Point(column, y));
+        while (y < rows - 1) {
+            if (movingRight) {
+                for (int x = 0; x < cols; x++) {
+                    grid[y][x] = 1;
+                    pathPoints.add(new Point(x, y));
                 }
-                movingRight = !movingRight;
-                if (y + 2 < rows) {
-                    y += 2;
+            } else {
+                for (int x = cols - 1; x >= 0; x--) {
+                    grid[y][x] = 1;
+                    pathPoints.add(new Point(x, y));
                 }
             }
+
+            movingRight = !movingRight;
+
+            if (y + 1 < rows) {
+                int x = movingRight ? 0 : cols - 1;
+                grid[y + 1][x] = 1;
+                pathPoints.add(new Point(x, y + 1));
+            }
+
+            y += 2;
         }
     }
 
@@ -187,59 +228,107 @@ class MapGrid {
 
 
 class Enemy {
-    private int x, y, health;
+    private double x, y;
+    private int health, goldDrop;
+    private float speed;
     private final List<Point> pathPoints;
     private int currentPathIndex;
-    private int speed;
-    private int moveCounter;
+    private double progressToNextPoint;
 
     public Enemy(int startX, int startY, MapGrid map) {
         this.x = startX;
         this.y = startY;
-        this.health = 100;
         this.pathPoints = map.getPathPoints();
         this.currentPathIndex = 0;
-        this.speed = 5;
-        this.moveCounter = 0;
+        this.progressToNextPoint = 0;
+    }
+
+    public void setAttributes(int health, float speed, int goldDrop) {
+        this.health = health;
+        this.speed = speed;
+        this.goldDrop = goldDrop;
     }
 
     public void move() {
-        moveCounter++;
-        if (moveCounter >= speed && currentPathIndex < pathPoints.size()) {
-            moveCounter = 0;
-            Point next = pathPoints.get(currentPathIndex);
-            x = next.x;
-            y = next.y;
+        if (currentPathIndex >= pathPoints.size() - 1) {
+            return;
+        }
+
+        Point currentPoint = pathPoints.get(currentPathIndex);
+        Point nextPoint = pathPoints.get(currentPathIndex + 1);
+
+        double targetX = nextPoint.x;
+        double targetY = nextPoint.y;
+
+        progressToNextPoint += speed / 100.0;
+
+        x = currentPoint.x + (targetX - currentPoint.x) * progressToNextPoint;
+        y = currentPoint.y + (targetY - currentPoint.y) * progressToNextPoint;
+
+        if (progressToNextPoint >= 1.0) {
             currentPathIndex++;
+            progressToNextPoint = 0;
         }
     }
 
     public boolean isAtEnd() {
-        return currentPathIndex >= pathPoints.size();
+        return currentPathIndex >= pathPoints.size() - 1;
     }
 
     public void draw(Graphics g) {
         g.setColor(Color.RED);
-        g.fillRect(x * MapGrid.CELL_SIZE, y * MapGrid.CELL_SIZE, MapGrid.CELL_SIZE, MapGrid.CELL_SIZE);
+        g.fillOval((int) (x * MapGrid.CELL_SIZE), (int) (y * MapGrid.CELL_SIZE), MapGrid.CELL_SIZE, MapGrid.CELL_SIZE);
 
         g.setColor(Color.BLACK);
-        g.drawString("HP: " + health, x * MapGrid.CELL_SIZE + 10, y * MapGrid.CELL_SIZE - 5);
+        FontMetrics fm = g.getFontMetrics();
+        String healthText = String.valueOf(health);
+        int textWidth = fm.stringWidth(healthText);
+        int textHeight = fm.getAscent();
+        int centerX = (int) (x * MapGrid.CELL_SIZE + MapGrid.CELL_SIZE / 2 - textWidth / 2);
+        int centerY = (int) (y * MapGrid.CELL_SIZE + MapGrid.CELL_SIZE / 2 + textHeight / 2);
+        g.drawString(healthText, centerX, centerY);
     }
 
     public int getX() {
-        return x;
+        return (int) x;
     }
 
     public int getY() {
-        return y;
+        return (int) y;
     }
 
     public int getHealth() {
         return health;
     }
 
+    public int getGoldDrop() {
+        return goldDrop;
+    }
+
     public void reduceHealth(int amount) {
         this.health -= amount;
+    }
+}
+
+
+class Runt extends Enemy {
+    public Runt(int startX, int startY, MapGrid map) {
+        super(startX, startY, map);
+        setAttributes(100, 11, 1);
+    }
+}
+
+class Knight extends Enemy {
+    public Knight(int startX, int startY, MapGrid map) {
+        super(startX, startY, map);
+        setAttributes(200, 7, 5);
+    }
+}
+
+class Brute extends Enemy {
+    public Brute(int startX, int startY, MapGrid map) {
+        super(startX, startY, map);
+        setAttributes(500, 4, 10);
     }
 }
 
@@ -252,14 +341,6 @@ class Tower {
         this.y = y;
     }
 
-    public int getX() {
-        return x;
-    }
-
-    public int getY() {
-        return y;
-    }
-
     public void attack(List<Enemy> enemies) {
         Iterator<Enemy> enemyIterator = enemies.iterator();
         while (enemyIterator.hasNext()) {
@@ -268,10 +349,19 @@ class Tower {
             if (distance <= range) {
                 enemy.reduceHealth(1);
                 if (enemy.getHealth() <= 0) {
+                    GamePanel.incrementGold(10);
                     enemyIterator.remove();
                 }
             }
         }
+    }
+
+    public int getX() {
+        return x;
+    }
+
+    public int getY() {
+        return y;
     }
 
     public void draw(Graphics g) {
