@@ -340,7 +340,7 @@ class TowerSelectionPanel extends JPanel {
             });
         });
 
-        addTowerRow(gamePanel, "DoT Tower", "25 Gold", Color.MAGENTA, () -> new DoTTower(0, 0), e -> {
+        addTowerRow(gamePanel, "DoT Tower", "50 Gold", Color.MAGENTA, () -> new DoTTower(0, 0), e -> {
             isSellMode = false;
             gamePanel.setUpgradeMode(null);
             gamePanel.setSellMode(false);
